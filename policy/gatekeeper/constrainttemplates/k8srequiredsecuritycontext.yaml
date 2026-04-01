@@ -1,0 +1,52 @@
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequiredsecuritycontext
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequiredSecurityContext
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            exemptNamespaces:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8srequiredsecuritycontext
+
+        exempt(ns, exemptNamespaces) {
+          exemptNamespaces[_] == ns
+        }
+
+        violation[{"msg": msg}] {
+          input.review.kind.kind == "Deployment"
+          ns := input.review.object.metadata.namespace
+          not exempt(ns, input.parameters.exemptNamespaces)
+          container := input.review.object.spec.template.spec.containers[_]
+          not container.securityContext.runAsNonRoot
+          msg := sprintf("container %v must set runAsNonRoot=true", [container.name])
+        }
+
+        violation[{"msg": msg}] {
+          input.review.kind.kind == "Deployment"
+          ns := input.review.object.metadata.namespace
+          not exempt(ns, input.parameters.exemptNamespaces)
+          container := input.review.object.spec.template.spec.containers[_]
+          not container.securityContext.readOnlyRootFilesystem
+          msg := sprintf("container %v must set readOnlyRootFilesystem=true", [container.name])
+        }
+
+        violation[{"msg": msg}] {
+          input.review.kind.kind == "Deployment"
+          ns := input.review.object.metadata.namespace
+          not exempt(ns, input.parameters.exemptNamespaces)
+          container := input.review.object.spec.template.spec.containers[_]
+          container.securityContext.allowPrivilegeEscalation != false
+          msg := sprintf("container %v must set allowPrivilegeEscalation=false", [container.name])
+        }

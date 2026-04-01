@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: transaction-api-config
+  namespace: secure-bank
+data:
+  APP_ENV: "production"

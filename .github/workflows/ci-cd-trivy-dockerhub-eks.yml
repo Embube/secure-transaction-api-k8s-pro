@@ -1,0 +1,176 @@
+name: CI-CD-Trivy-DockerHub-EKS
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+env:
+  IMAGE_NAME: secure-transaction-api
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  build-scan-push:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set image metadata
+        id: meta
+        run: echo "image_tag=${GITHUB_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r app/requirements.txt
+
+      - name: Basic import test
+        working-directory: app
+        run: |
+          python -c "import app; print('App import test passed')"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build Docker image locally for scan
+        run: |
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} ./app
+
+      - name: Trivy filesystem scan (table)
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          output: trivy-fs-report.txt
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+
+      - name: Trivy filesystem scan (SARIF)
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-fs-results.sarif
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+
+      - name: Upload filesystem SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs-results.sarif
+
+      - name: Trivy image scan (table)
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          format: table
+          output: trivy-image-report.txt
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+
+      - name: Trivy image scan (SARIF)
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          format: sarif
+          output: trivy-image-results.sarif
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+
+      - name: Upload image SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image-results.sarif
+
+      - name: Push Docker image to Docker Hub
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Upload scan artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-security-reports
+          path: |
+            trivy-fs-report.txt
+            trivy-fs-results.sarif
+            trivy-image-report.txt
+            trivy-image-results.sarif
+
+  validate-and-deploy-eks:
+    runs-on: ubuntu-latest
+    needs: build-scan-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Update kubeconfig for EKS
+        run: |
+          aws eks update-kubeconfig --region "${{ secrets.AWS_REGION }}" --name "${{ secrets.EKS_CLUSTER_NAME }}"
+
+      - name: Real cluster validation
+        run: |
+          kubectl get nodes
+          kubectl version
+          kubectl auth can-i get pods --all-namespaces
+
+      - name: Helm lint
+        run: helm lint ./helm/secure-transaction-api
+
+      - name: Helm template validation
+        run: |
+          helm template secure-transaction-api ./helm/secure-transaction-api             --namespace secure-bank             --set image.repository=${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}             --set image.tag=${{ needs.build-scan-push.outputs.image_tag }}             --set secret.apiKey=${{ secrets.APP_API_KEY }}
+
+      - name: Deploy with Helm
+        run: |
+          helm upgrade --install secure-transaction-api ./helm/secure-transaction-api             --namespace secure-bank             --create-namespace             --set image.repository=${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}             --set image.tag=${{ needs.build-scan-push.outputs.image_tag }}             --set secret.apiKey=${{ secrets.APP_API_KEY }}             --wait --timeout 5m
+
+      - name: Post-deploy validation
+        run: |
+          kubectl rollout status deployment/transaction-api -n secure-bank --timeout=180s
+          kubectl get svc,ingress,pods -n secure-bank
+          helm test secure-transaction-api -n secure-bank

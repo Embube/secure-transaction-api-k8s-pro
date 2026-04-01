@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: transaction-api-ingress
+  namespace: secure-bank
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-staging
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - transaction.example.com
+      secretName: transaction-api-tls
+  rules:
+    - host: transaction.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: transaction-api-service
+                port:
+                  number: 80

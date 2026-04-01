@@ -1,0 +1,71 @@
+namespace: secure-bank
+
+image:
+  repository: your-dockerhub-username/secure-transaction-api
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+serviceAccount:
+  create: true
+  name: transaction-api-sa
+
+config:
+  appEnv: production
+
+secret:
+  apiKey: "change-me"
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 5000
+
+ingress:
+  enabled: true
+  className: nginx
+  host: transaction.example.com
+  path: /
+  pathType: Prefix
+  tls:
+    enabled: true
+    secretName: transaction-api-tls
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-staging
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 300m
+    memory: 256Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  averageUtilization: 60
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+
+networkPolicy:
+  enabled: true
+  ingressNamespaces:
+    - ingress-nginx
+    - monitoring
+
+serviceMonitor:
+  enabled: true
+  labels:
+    release: kube-prom-stack
+  interval: 15s
