@@ -152,3 +152,6 @@ Included sample policies:
 - Replace placeholder domains, email addresses, and secrets before deploying.
 - The ingress assumes an NGINX ingress controller is installed.
 - `ServiceMonitor` requires Prometheus Operator / kube-prometheus-stack.
+
+## Update
+- Triggering GitHub Actions pipeline
