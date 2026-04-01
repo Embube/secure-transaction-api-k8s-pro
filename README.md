@@ -147,14 +147,6 @@ Included sample policies:
 - require `allowPrivilegeEscalation=false`
 - block images using the `:latest` tag
 
-## Resume Bullet
-
-> Built and deployed a secure Flask transaction API on Kubernetes using Docker, Helm, GitHub Actions, Trivy, Amazon EKS, cert-manager, Prometheus/Grafana, and OPA Gatekeeper.
-
-## Interview Summary
-
-> I built a DevSecOps project that packages a Flask API into a hardened container, deploys it through Helm on Kubernetes, validates and deploys it to EKS through GitHub Actions, scans both source and image with Trivy, exposes metrics to Prometheus, loads a Grafana dashboard automatically, and enforces cluster-side controls with Gatekeeper.
-
 ## Notes
 
 - Replace placeholder domains, email addresses, and secrets before deploying.
